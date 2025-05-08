@@ -17,7 +17,7 @@ function generateRoomCode() {
 function generateItemsForRound() {
   const allItems = [
     //Drinks
-    { id: "shot", name: "Shot", type: "drink", effect: -1 },
+    { id: "shot", name: "Shot", type: "drink", effect: -4 },
     { id: "beer", name: "Beer", type: "drink", effect: -2 },
     { id: "wine", name: "Wine", type: "drink", effect: -3 },
     { id: "cocktail", name: "Cocktail", type: "drink", effect: -5 },
