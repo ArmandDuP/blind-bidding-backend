@@ -5,45 +5,45 @@ const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" },
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
 const PORT = 3000;
 const rooms = {};
 
-// Generate a random room code
 function generateRoomCode() {
   return crypto.randomBytes(2).toString("hex").toUpperCase();
 }
 
-// Randomly select 2–3 items for a round
 function generateItemsForRound() {
   const allItems = [
-    { id: "item1", name: "Sword", type: "weapon", damage: 15 },
-    { id: "item2", name: "Axe", type: "weapon", damage: 20 },
-    // { id: "item3", name: "Health Potion", type: "heal", amount: 20 },
-    // { id: "item4", name: "Mega Heal", type: "heal", amount: 35 },
+    //Drinks
+    { id: "shot", name: "Shot", type: "drink", effect: -1 },
+    { id: "beer", name: "Beer", type: "drink", effect: -2 },
+    { id: "wine", name: "Wine", type: "drink", effect: -3 },
+    { id: "cocktail", name: "Cocktail", type: "drink", effect: -5 },
+    //Water
+    { id: "glassWater", name: "Glass of Water", type: "water", effect: +2 },
+    { id: "bottleWater", name: "Bottle of Water", type: "water", effect: +4 },
+    { id: "rehydrate", name: "Re-Hydrate", type: "water", effect: +6 },
   ];
 
   const shuffled = allItems.sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, 1);
+  return shuffled.slice(0, 3);
 }
 
 function startNextItemBidding(roomCode) {
   const room = rooms[roomCode];
 
   if (room.currentItemIndex >= room.currentItems.length) {
-    // All items done → trigger attack phase
     io.to(roomCode).emit("biddingComplete");
     console.log(
-      `All items bid in room ${roomCode}. Transition to attack phase.`
+      `All items bid in room ${roomCode}. Transition to drink phase.`
     );
     return;
   }
 
   const currentItem = room.currentItems[room.currentItemIndex];
-  room.currentBids = {}; // reset bids
+  room.currentBids = {};
 
   io.to(roomCode).emit("newItemToBid", { item: currentItem });
   console.log(`Room ${roomCode}: Bidding started for item ${currentItem.name}`);
@@ -60,52 +60,48 @@ function resolveCurrentItem(roomCode) {
 
   for (const [playerId, amount] of Object.entries(bids)) {
     const player = players[playerId];
-    if (amount > highestBid && amount <= player.gold) {
+    if (amount > highestBid && amount <= player.blackoutBucks) {
       highestBid = amount;
       winnerId = playerId;
     }
   }
 
-  const result = {
-    item,
-    winner: null,
-    bid: highestBid,
-  };
+  const result = { item, winner: null, bid: highestBid };
 
   if (winnerId) {
-    players[winnerId].gold -= highestBid;
-    players[winnerId].items.push(item);
-    if (item.type === "heal") {
-      players[winnerId].health += item.amount;
+    players[winnerId].blackoutBucks -= highestBid;
+
+    if (item.type === "water") {
+      players[winnerId].vision += item.effect;
+      // Don't store the water item, it's consumed immediately
+    } else {
+      players[winnerId].items.push(item); // Keep drink items
     }
+
     result.winner = players[winnerId].name;
   }
 
-  // Send result to room
   io.to(roomCode).emit("itemBidResult", {
     result,
     players: Object.values(players),
   });
 
-  // Advance to next item
   room.currentItemIndex++;
-  setTimeout(() => {
-    startNextItemBidding(roomCode);
-  }, 2000); // wait 2 sec before next item
+  setTimeout(() => startNextItemBidding(roomCode), 2000);
 }
 
-function resolveAttacks(roomCode) {
+function resolveDrinks(roomCode) {
   const room = rooms[roomCode];
   const results = [];
 
-  for (const [attackerId, { targetId, weaponId }] of Object.entries(
-    room.attacks
-  )) {
-    const attacker = room.players[attackerId];
+  for (const [giverId, { targetId, drinkId }] of Object.entries(room.attacks)) {
+    const giver = room.players[giverId];
 
-    if (!targetId || !weaponId) {
+    if (!giver) continue;
+
+    if (!targetId || !drinkId) {
       results.push({
-        attacker: attacker.name,
+        attacker: giver.name,
         target: null,
         damage: 0,
         weapon: null,
@@ -115,63 +111,53 @@ function resolveAttacks(roomCode) {
     }
 
     const target = room.players[targetId];
-    const weapon = attacker.items.find((i) => i.id === weaponId);
+    const drink = giver.items.find((i) => i.id === drinkId);
 
-    if (!attacker || !target || !weapon) continue;
+    if (!target || !drink) continue;
 
-    target.health -= weapon.damage;
+    target.vision += drink.effect;
     results.push({
-      attacker: attacker.name,
+      attacker: giver.name,
       target: target.name,
-      damage: weapon.damage,
-      weapon: weapon.name,
+      damage: drink.effect,
+      weapon: drink.name,
       skipped: false,
     });
 
-    attacker.items = attacker.items.filter((i) => i.id !== weaponId);
+    giver.items = giver.items.filter((i) => i.id !== drinkId);
   }
 
-  // ✅ Remove players with 0 or less HP
-  for (const [playerId, player] of Object.entries(room.players)) {
-    if (player.health <= 0) {
-      delete room.players[playerId];
-      console.log(`${player.name} has been eliminated.`);
+  for (const [id, player] of Object.entries(room.players)) {
+    if (player.vision <= 0) {
+      delete room.players[id];
+      console.log(`${player.name} has blacked out!`);
     }
   }
 
-  const remainingPlayers = Object.values(room.players);
+  const survivors = Object.values(room.players);
 
-  // ✅ Check for winner
-  if (remainingPlayers.length === 1) {
-    const winner = remainingPlayers[0];
-    io.to(roomCode).emit("gameOver", {
-      winner: winner.name,
-    });
-    console.log(`🏆 ${winner.name} wins the game in room ${roomCode}`);
+  if (survivors.length === 1) {
+    io.to(roomCode).emit("gameOver", { winner: survivors[0].name });
+    console.log(`🏆 ${survivors[0].name} wins the game in room ${roomCode}`);
     return;
   }
 
-  // ✅ Give bonus gold to all remaining players
-  remainingPlayers.forEach((p) => (p.gold += 20));
+  survivors.forEach((p) => (p.blackoutBucks += 20));
 
-  // ✅ Clear attacks and send results
   room.attacks = {};
-
   io.to(roomCode).emit("attackResults", {
     results,
-    players: remainingPlayers,
+    players: survivors,
   });
 }
 
 io.on("connection", (socket) => {
   console.log("A user connected:", socket.id);
 
-  // ✅ Debug log: catch all events for visibility
   socket.onAny((event, ...args) => {
     console.log(`Received event: ${event}`, args);
   });
 
-  // ✅ Create Room
   socket.on("createRoom", (callback) => {
     const roomCode = generateRoomCode();
     rooms[roomCode] = {
@@ -179,50 +165,51 @@ io.on("connection", (socket) => {
       players: {},
       round: 0,
       currentItems: [],
-      currentItemIndex: 0, // 👈 track progress
-      currentBids: {}, // 👈 store player bids for current item
+      currentItemIndex: 0,
+      currentBids: {},
     };
     socket.join(roomCode);
     callback({ roomCode });
     console.log(`Room ${roomCode} created`);
   });
 
-  // ✅ Host starts the round
   socket.on("startRound", ({ roomCode }) => {
     const room = rooms[roomCode];
-    if (!room) return;
+    if (!room || room.vipId !== socket.id) return;
 
     const items = generateItemsForRound();
     room.currentItems = items;
     room.currentItemIndex = 0;
     room.currentBids = {};
 
-    // Start bidding on the first item
     startNextItemBidding(roomCode);
   });
 
-  // ✅ Player joins room
   socket.on("joinRoom", ({ roomCode, playerName }, callback) => {
     const room = rooms[roomCode];
-    if (!room) {
-      return callback({ success: false, message: "Room not found" });
-    }
+    if (!room) return callback({ success: false, message: "Room not found" });
+
+    const isFirstPlayer = Object.keys(room.players).length === 0;
 
     room.players[socket.id] = {
       id: socket.id,
       name: playerName,
-      health: 50,
-      gold: 50,
+      vision: 20,
+      blackoutBucks: 50,
       items: [],
+      isVIP: isFirstPlayer,
     };
+
+    if (isFirstPlayer) {
+      room.vipId = socket.id;
+    }
 
     socket.join(roomCode);
     io.to(roomCode).emit("playersUpdate", Object.values(room.players));
-    callback({ success: true });
+    callback({ success: true, isVIP: isFirstPlayer });
     console.log(`${playerName} joined room ${roomCode}`);
   });
 
-  // ✅ Player submits their bid
   socket.on("submitBid", ({ roomCode, bid }, callback) => {
     const room = rooms[roomCode];
     const player = room?.players?.[socket.id];
@@ -233,7 +220,6 @@ io.on("connection", (socket) => {
 
     room.currentBids[socket.id] = bid;
 
-    // All players submitted?
     if (
       Object.keys(room.currentBids).length === Object.keys(room.players).length
     ) {
@@ -243,7 +229,36 @@ io.on("connection", (socket) => {
     callback({ success: true });
   });
 
-  // ✅ Handle disconnection
+  socket.on("attack", ({ roomCode, targetId, weaponId }, callback) => {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    if (!room.attacks) room.attacks = {};
+    room.attacks[socket.id] = { targetId, drinkId: weaponId };
+
+    if (Object.keys(room.attacks).length === Object.keys(room.players).length) {
+      resolveDrinks(roomCode);
+    }
+
+    callback({ success: true });
+  });
+
+  socket.on("nextRound", ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (!room || room.vipId !== socket.id) return;
+
+    room.round += 1;
+    room.currentItems = generateItemsForRound();
+    room.currentItemIndex = 0;
+    room.currentBids = {};
+    room.attacks = {};
+    room.attackResults = [];
+
+    io.to(roomCode).emit("playersUpdate", Object.values(room.players));
+    startNextItemBidding(roomCode);
+    console.log(`Room ${roomCode} → Next round started`);
+  });
+
   socket.on("disconnect", () => {
     for (const code in rooms) {
       const room = rooms[code];
@@ -255,46 +270,12 @@ io.on("connection", (socket) => {
       }
     }
   });
-
-  socket.on("attack", ({ roomCode, targetId, weaponId }, callback) => {
-    const room = rooms[roomCode];
-    if (!room) return;
-
-    if (!room.attacks) room.attacks = {};
-    room.attacks[socket.id] = { targetId, weaponId }; // nulls allowed
-
-    if (Object.keys(room.attacks).length === Object.keys(room.players).length) {
-      resolveAttacks(roomCode);
-    }
-
-    callback({ success: true });
-  });
-
-  socket.on("nextRound", ({ roomCode }) => {
-    const room = rooms[roomCode];
-    if (!room || room.hostId !== socket.id) return;
-
-    room.round += 1;
-    room.currentItems = generateItemsForRound();
-    room.currentItemIndex = 0;
-    room.currentBids = {};
-    room.attacks = {}; // clear attack choices
-    room.attackResults = [];
-
-    // Optionally: heal everyone a bit, or do something else
-
-    io.to(roomCode).emit("playersUpdate", Object.values(room.players)); // send updated stats
-    startNextItemBidding(roomCode);
-    console.log(`Room ${roomCode} → Next round started`);
-  });
 });
 
-// Health check route (optional)
 app.get("/", (req, res) => {
-  res.send("Blind Bidding Game Server is running!");
+  res.send("Party Drinking Game Server is running!");
 });
 
-// Start server
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
