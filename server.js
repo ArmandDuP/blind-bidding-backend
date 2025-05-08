@@ -87,7 +87,7 @@ function resolveCurrentItem(roomCode) {
   });
 
   room.currentItemIndex++;
-  setTimeout(() => startNextItemBidding(roomCode), 2000);
+  setTimeout(() => startNextItemBidding(roomCode), 4000);
 }
 
 function resolveDrinks(roomCode) {
