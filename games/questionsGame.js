@@ -2,7 +2,7 @@ module.exports = function (io) {
   const questionsNamespace = io.of("/questions");
   const rooms = {};
 
-  const questionList = require("./questions/questionsList");
+  const questionList = require("./questions/questionList");
 
   //   const questionList = [
   //     "Who is the funniest?",
