@@ -219,7 +219,7 @@ module.exports = function (io) {
       console.log(`${playerName} joined room ${roomCode}`);
     });
 
-    socket.on("submitBid", ({ roomCode, bid }, callback) => {
+    socket.on("submitBid", ({ roomCode, bid, playerName }, callback) => {
       const room = rooms[roomCode];
       const player = room?.players?.[socket.id];
       if (!room || !player) return;
@@ -229,6 +229,11 @@ module.exports = function (io) {
 
       room.currentBids[socket.id] = bid;
 
+      // ✅ Notify room that this player placed a bid
+      console.log(`📤 Emitting playerPlacedBid for: ${playerName}`);
+      biddingNamespace.to(roomCode).emit("playerPlacedBid", playerName);
+
+      // ✅ If all players have submitted bids, resolve item
       if (
         Object.keys(room.currentBids).length ===
         Object.keys(room.players).length
