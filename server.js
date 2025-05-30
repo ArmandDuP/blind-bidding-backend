@@ -14,6 +14,7 @@ const io = new Server(server, {
 
 require("./games/biddingGame")(io); // Namespace: /bidding
 require("./games/questionsGame")(io); // Namespace: /questions
+require("./games/colorsGame")(io); // Namespace: /colors
 
 app.get("/", (req, res) => {
   res.send("Blackout Games Server is running.");
